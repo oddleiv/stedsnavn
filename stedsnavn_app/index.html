@@ -35,12 +35,12 @@
 <body>
 <main>
   <h1>Stedsnavn</h1>
-  <p><b>Versjon 4</b>: velger lokale navn først. Store OSM-områder som Norden, Skandinavia, tidssoner og gamle regioner brukes ikke som beste forslag.</p>
+  <p><b>Versjon 5</b>: raskere. Bruker Nominatim + Kartverket/SSR først. OSM-flater/Overpass er valgfritt fordi det ofte er tregt.</p>
 
   <section class="card">
     <button class="primary" id="gpsBtn">Finn hvor jeg er</button>
     <button class="secondary" id="testBtn">Test med Majorstuen/Fagerborg</button>
-    <p class="small">GPS krever at siden åpnes via <b>https</b>, slik som GitHub Pages.</p>
+    <label class="small" style="display:block;margin-top:10px"><input type="checkbox" id="osmToggle"> Søk også OSM-flater/Overpass (tregere, men kan gi polygon-treff)</label><p class="small">GPS krever at siden åpnes via <b>https</b>, slik som GitHub Pages.</p>
   </section>
 
   <section class="card"><div id="status" class="status">Klar.</div></section>
@@ -188,9 +188,14 @@ async function runLookup(lat, lon, acc) {
   output.innerHTML = '';
   const errors = [];
   let nom = [], ssr = [], osm = [];
+  const useOsm = document.getElementById('osmToggle')?.checked;
   try { nom = await lookupNominatim(lat, lon); } catch(e) { errors.push('Nominatim: ' + e.message); }
   try { ssr = await lookupSSR(lat, lon); } catch(e) { errors.push('Kartverket/SSR: ' + e.message); }
-  try { osm = await lookupOsmAreas(lat, lon); } catch(e) { errors.push('OSM/Overpass: ' + e.message); }
+  if (useOsm) {
+    try { osm = await lookupOsmAreas(lat, lon); } catch(e) { errors.push('OSM/Overpass: ' + e.message); }
+  } else {
+    errors.push('OSM-flater/Overpass er hoppet over for raskere søk. Kryss av over hvis du vil teste polygon-søk.');
+  }
   const best = chooseBest(nom, ssr, osm);
   setStatus('Oppslag ferdig.');
   render(lat, lon, acc, best, nom, ssr, osm, errors);
