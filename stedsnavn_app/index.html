@@ -18,7 +18,7 @@
 </head>
 <body>
   <h1>Stedsnavn</h1>
-  <p class="muted">Versjon 7: SSR-radius kan velges. Viser både stedsnavn, adresser og samlet antall SSR-treff.</p>
+  <p class="muted">Versjon 8: fikser Kartverket/SSR-visning slik at navn ikke blir [object Object].</p>
   <div class="card">
     <button id="locBtn">Finn hvor jeg er</button>
     <button id="testBtn" class="secondary">Test med Majorstuen/Fagerborg</button>
@@ -34,6 +34,36 @@ const statusBox = el('status'), result = el('result');
 const badNames = [/timezone/i,/utc/i,/norden/i,/skandinavia/i,/europe/i,/oslo og akershus/i,/oslo og viken/i,/pohjoismaat/i,/norðurlönd/i];
 const addressTypes = ['Adressenavn','Adresse','Vegadresse','Matrikkeladresse'];
 function setStatus(s){statusBox.textContent=s;}
+
+function firstText(v){
+  // Kartverket/SSR sender ofte navn som objekter/lister, ikke ren tekst.
+  // Denne henter ut en lesbar skrivemåte i stedet for å vise [object Object].
+  if(v === null || v === undefined) return '';
+  if(typeof v === 'string' || typeof v === 'number') return String(v);
+  if(Array.isArray(v)){
+    for(const item of v){ const t = firstText(item); if(t) return t; }
+    return '';
+  }
+  if(typeof v === 'object'){
+    const keys = ['skrivemåte','skrivemate','navn','stedsnavn','name','tekst','verdi','objekttype','navneobjekttype'];
+    for(const k of keys){ if(k in v){ const t = firstText(v[k]); if(t) return t; } }
+    // Noen SSR-objekter har språkvarianter som ukjente nøkler.
+    for(const k of Object.keys(v)){ const t = firstText(v[k]); if(t) return t; }
+  }
+  return '';
+}
+function extractSsrName(p){
+  return firstText(p.skrivemåte) || firstText(p.skrivemate) || firstText(p.stedsnavn) || firstText(p.navn) || firstText(p.name) || '';
+}
+function extractSsrKind(p){
+  return firstText(p.navneobjekttype) || firstText(p.objekttype) || firstText(p.stedstatus) || firstText(p.type) || '';
+}
+function extractDist(p){
+  const v = p.avstand ?? p.meterFraPunkt ?? p.distance ?? p.avstandMeter ?? '';
+  if(v === '' || v === null || v === undefined) return '';
+  const n = Number(v); return Number.isFinite(n) ? Math.round(n) : firstText(v);
+}
+
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function timeoutFetch(url, ms=7000){const ac=new AbortController();const t=setTimeout(()=>ac.abort(),ms);return fetch(url,{signal:ac.signal,headers:{'Accept':'application/json'}}).finally(()=>clearTimeout(t));}
 function card(title, html, cls=''){return `<div class="card ${cls}"><h2>${esc(title)}</h2>${html}</div>`}
@@ -59,9 +89,12 @@ async function ssr(lat, lon){
   const url=`https://ws.geonorge.no/stedsnavn/v1/punkt?nord=${lat}&ost=${lon}&koordsys=4326&radius=${radius}&treffPerSide=50&side=1`;
   const r=await timeoutFetch(url,7000); if(!r.ok) throw new Error('Kartverket/SSR: '+r.status); const j=await r.json();
   const names=(j.navn||j.stedsnavn||j.features||[]).map(o=>{
-    const p=o.properties||o; const name=(p.stedsnavn||p.skrivemåte||p.navn||p.name||'');
-    const kind=(p.navneobjekttype||p.objekttype||p.stedstatus||p.type||''); const dist=p.avstand||p.meterFraPunkt||p.distance||'';
-    return {name, kind: kind+(dist?` ${Math.round(dist)} m`:''), rawKind: kind, dist};
+    const p=o.properties||o;
+    const name=extractSsrName(p);
+    const rawKind=extractSsrKind(p);
+    const dist=extractDist(p);
+    const kind=rawKind + (dist ? ` ${dist} m` : '');
+    return {name, kind, rawKind, dist};
   }).filter(x=>x.name);
   const places=names.filter(x=>!addressTypes.includes(x.rawKind)).filter(x=>!/^Adressenavn/i.test(x.rawKind));
   const addr=names.filter(x=>addressTypes.includes(x.rawKind)||/^Adressenavn/i.test(x.rawKind));
