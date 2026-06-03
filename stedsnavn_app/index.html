@@ -18,11 +18,12 @@
 </head>
 <body>
   <h1>Stedsnavn</h1>
-  <p class="muted">Versjon 6: rask modus uten Overpass. Adressenavn fra Kartverket vises separat og brukes ikke som beste stedsnavn.</p>
+  <p class="muted">Versjon 7: SSR-radius kan velges. Viser både stedsnavn, adresser og samlet antall SSR-treff.</p>
   <div class="card">
     <button id="locBtn">Finn hvor jeg er</button>
     <button id="testBtn" class="secondary">Test med Majorstuen/Fagerborg</button>
     <label class="chk"><input id="overpassChk" type="checkbox"> Søk også OSM-flater/Overpass, tregt</label>
+    <label class="chk">SSR-radius <select id="ssrRadius" style="font-size:18px;padding:6px;border-radius:8px;border:1px solid #cbd5e1"><option value="300">300 m</option><option value="500" selected>500 m</option><option value="1000">1 km</option><option value="2000">2 km</option></select></label>
     <p class="muted">Prioritet: Nominatim lokalt område → Kartverket/SSR stedsnavn → adresse/gate. Overpass er av som standard.</p>
   </div>
   <div id="status" class="card">Klar.</div>
@@ -53,8 +54,9 @@ async function nominatim(lat, lon){
   const r=await timeoutFetch(url,7000); if(!r.ok) throw new Error('Nominatim: '+r.status); return r.json();
 }
 async function ssr(lat, lon){
-  // Kartverket punkt accepts WGS84 with koordsys=4326 in this app. Radius 300 m, sorted by distance when API returns distance.
-  const url=`https://ws.geonorge.no/stedsnavn/v1/punkt?nord=${lat}&ost=${lon}&koordsys=4326&radius=300&treffPerSide=30&side=1`;
+  const radius = el('ssrRadius') ? el('ssrRadius').value : 500;
+  // Kartverket punkt accepts WGS84 with koordsys=4326 in this app. Radius can be adjusted in the UI.
+  const url=`https://ws.geonorge.no/stedsnavn/v1/punkt?nord=${lat}&ost=${lon}&koordsys=4326&radius=${radius}&treffPerSide=50&side=1`;
   const r=await timeoutFetch(url,7000); if(!r.ok) throw new Error('Kartverket/SSR: '+r.status); const j=await r.json();
   const names=(j.navn||j.stedsnavn||j.features||[]).map(o=>{
     const p=o.properties||o; const name=(p.stedsnavn||p.skrivemåte||p.navn||p.name||'');
@@ -63,7 +65,7 @@ async function ssr(lat, lon){
   }).filter(x=>x.name);
   const places=names.filter(x=>!addressTypes.includes(x.rawKind)).filter(x=>!/^Adressenavn/i.test(x.rawKind));
   const addr=names.filter(x=>addressTypes.includes(x.rawKind)||/^Adressenavn/i.test(x.rawKind));
-  return {places, addr};
+  return {places, addr, all:names};
 }
 async function overpass(lat, lon){
   const q=`[out:json][timeout:6];is_in(${lat},${lon})->.a;area.a["name"];out tags qt 30;`;
@@ -74,7 +76,7 @@ async function overpass(lat, lon){
     .slice(0,10);
 }
 async function lookup(lat, lon, acc=''){
-  result.innerHTML=''; const warnings=[]; let nom=null, ssrRes={places:[],addr:[]}, osm=[];
+  result.innerHTML=''; const warnings=[]; let nom=null, ssrRes={places:[],addr:[],all:[]}, osm=[];
   setStatus('Slår opp Nominatim …'); try{nom=await nominatim(lat,lon);}catch(e){warnings.push(e.message||String(e));}
   setStatus('Slår opp Kartverket/SSR …'); try{ssrRes=await ssr(lat,lon);}catch(e){warnings.push(e.message||String(e));}
   if(el('overpassChk').checked){ setStatus('Slår opp OSM-flater/Overpass …'); try{osm=await overpass(lat,lon);}catch(e){warnings.push((e.name==='AbortError')?'OSM/Overpass: tidsavbrudd':(e.message||String(e)));} }
@@ -83,8 +85,10 @@ async function lookup(lat, lon, acc=''){
   if(best) html+=card('Beste forslag',`<div class="big">${esc(best.name)}</div><div class="muted">${esc(best.source)} · ${esc(best.kind)}</div>`,'best');
   html+=card('Posisjon',`<div class="row"><div class="label">Lat/lon</div><div>${lat.toFixed(6)}, ${lon.toFixed(6)}</div></div><div class="row"><div class="label">Nøyaktighet</div><div>${acc?esc(acc)+' m':'testpunkt'}</div></div>`);
   if(nom){ const a=nom.address||{}; const bits=['neighbourhood','quarter','suburb','locality','farm','village','hamlet','road','city','municipality','county'].filter(k=>a[k]).map(k=>`<span class="pill">${esc(k)}: ${esc(a[k])}</span>`).join(''); html+=card('Nominatim', bits||`<p>${esc(nom.display_name||'')}</p>`); }
+  html+=card('Kartverket/SSR status', `<p class="muted">Fant ${ssrRes.all.length} SSR-treff innen ${esc(el('ssrRadius')?.value || '500')} m: ${ssrRes.places.length} stedsnavn og ${ssrRes.addr.length} adressenavn.</p>`);
   html+=card('Kartverket/SSR stedsnavn', rows(ssrRes.places.slice(0,12)));
-  html+=card('Kartverket/SSR adresser', rows(ssrRes.addr.slice(0,8)));
+  html+=card('Kartverket/SSR adresser', rows(ssrRes.addr.slice(0,12)));
+  if(!ssrRes.places.length && ssrRes.all.length) html+=card('Kartverket/SSR alle treff', rows(ssrRes.all.slice(0,15)));
   if(el('overpassChk').checked) html+=card('OSM-flater etter filtrering', rows(osm));
   if(warnings.length) html+=card('Feil/varsler', warnings.map(w=>`<p>${esc(w)}</p>`).join(''),'warn');
   result.innerHTML=html;
