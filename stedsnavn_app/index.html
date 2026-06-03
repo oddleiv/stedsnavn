@@ -4,40 +4,41 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
-  <link rel="manifest" href="manifest.webmanifest" />
-  <title>Lokalt stedsnavn</title>
+  <title>Stedsnavn</title>
   <style>
     :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111827; background: #f8fafc; }
-    body { margin: 0; padding: 18px; }
+    body { margin: 0; padding: calc(12px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
     main { max-width: 760px; margin: auto; }
-    h1 { font-size: 1.65rem; margin: 12px 0 4px; }
+    h1 { font-size: 2rem; margin: 10px 0 4px; }
+    h2 { font-size: 1.12rem; margin: 0 0 10px; }
     .muted { color: #64748b; }
-    .card { background: white; border: 1px solid #e5e7eb; border-radius: 18px; padding: 16px; margin: 14px 0; box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05); }
+    .card { background: white; border: 1px solid #e5e7eb; border-radius: 18px; padding: 16px; margin: 14px 0; box-shadow: 0 4px 18px rgba(15,23,42,.05); }
     button { width: 100%; border: 0; border-radius: 14px; padding: 15px 18px; background: #0f172a; color: white; font-size: 1.05rem; font-weight: 700; }
     button.secondary { background: #e2e8f0; color: #0f172a; margin-top: 8px; }
-    button:disabled { opacity: 0.55; }
-    .big { font-size: 1.55rem; font-weight: 800; margin: 8px 0; }
-    .pill { display: inline-block; padding: 3px 9px; margin: 3px 4px 3px 0; background: #eef2ff; border-radius: 999px; font-size: 0.86rem; }
+    button:disabled { opacity: .55; }
+    .big { font-size: 1.65rem; font-weight: 800; margin: 6px 0 2px; }
+    .pill { display: inline-block; padding: 3px 9px; margin: 3px 4px 3px 0; background: #eef2ff; border-radius: 999px; font-size: .86rem; }
     .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
     .row:last-child { border-bottom: 0; }
     .label { color: #64748b; }
-    ol { padding-left: 20px; }
-    li { margin: 8px 0; }
-    code { background: #f1f5f9; border-radius: 8px; padding: 1px 5px; }
     .warn { background: #fff7ed; border-color: #fed7aa; }
     .ok { background: #f0fdf4; border-color: #bbf7d0; }
-    .small { font-size: 0.9rem; }
+    .small { font-size: .9rem; }
+    code { background: #f1f5f9; border-radius: 8px; padding: 1px 5px; }
+    ol { padding-left: 21px; }
+    li { margin: 7px 0; }
   </style>
 </head>
 <body>
 <main>
-  <h1>Lokalt stedsnavn</h1>
-  <p class="muted">Finn navngitte flater fra OpenStreetMap og offisielle stedsnavn fra Kartverket/SSR nær posisjonen din.</p>
+  <h1>Stedsnavn</h1>
+  <p class="small muted">Versjon 2: med tidsavbrudd, så siden ikke blir stående fast.</p>
+  <p class="muted">Vis lokalt navn for posisjonen din. Appen prøver først navngitte OSM-flater, deretter Kartverket/SSR og Nominatim.</p>
 
   <div class="card">
     <button id="locateBtn">Finn hvor jeg er</button>
-    <button id="demoBtn" class="secondary">Test med valgt koordinat</button>
-    <p class="small muted">Tips: på iPhone må siden normalt åpnes via HTTPS for at GPS skal virke.</p>
+    <button id="demoBtn" class="secondary">Test med Majorstuen/Fagerborg</button>
+    <p class="small muted">GPS krever at siden åpnes via <b>https</b>, slik som GitHub Pages.</p>
   </div>
 
   <div id="status" class="card" hidden></div>
@@ -48,14 +49,167 @@
   <div id="nominatim" class="card" hidden></div>
 
   <div class="card">
-    <b>Hvordan appen velger navn</b>
+    <h2>Prioritet</h2>
     <ol>
-      <li>Først: OSM-flater som punktet ligger inni, f.eks. <code>place=neighbourhood</code>, <code>place=suburb</code>, park, skog eller boligområde.</li>
-      <li>Deretter: Kartverket/SSR-stedsnavn i nærheten, sortert omtrent etter avstand.</li>
-      <li>Til slutt: Nominatim/adresse som fallback.</li>
+      <li>Navngitte flater som punktet ligger inni, f.eks. <code>neighbourhood</code>, <code>suburb</code>, <code>quarter</code>, <code>park</code>.</li>
+      <li>Offisielle stedsnavn fra Kartverket/SSR nær posisjonen.</li>
+      <li>Nominatim/adresse som fallback.</li>
     </ol>
   </div>
 </main>
-<script src="app.js"></script>
+
+<script>
+const $ = id => document.getElementById(id);
+const show = (id, html, cls='') => { const el=$(id); el.hidden=false; el.className='card '+cls; el.innerHTML=html; };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+$('locateBtn').addEventListener('click', locateMe);
+$('demoBtn').addEventListener('click', () => runLookup(59.9291, 10.7277, 0));
+
+function locateMe(){
+  if (!navigator.geolocation) { show('status','<b>GPS finnes ikke i denne nettleseren.</b>','warn'); return; }
+  show('status','Henter GPS-posisjon …');
+  $('locateBtn').disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    p => runLookup(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
+    e => { $('locateBtn').disabled=false; show('status', `<b>Fikk ikke posisjon.</b><br>${esc(e.message)}<br><br>Sjekk at Safari har stedstilgang, og at siden kjøres via https.`, 'warn'); },
+    { enableHighAccuracy:true, timeout:15000, maximumAge:10000 }
+  );
+}
+
+async function runLookup(lat, lon, accuracy){
+  $('locateBtn').disabled = false;
+  show('status','Slår opp lokale navn …');
+  show('coords', `<h2>Posisjon</h2><div class="row"><div class="label">Lat/lon</div><div>${lat.toFixed(6)}, ${lon.toFixed(6)}</div></div><div class="row"><div class="label">Nøyaktighet</div><div>${accuracy ? Math.round(accuracy)+' m' : 'demo'}</div></div>`);
+
+  let osmItems = [], ssrItems = [], nomItem = null;
+
+  // Kjør ett og ett slik at appen ikke ser ut som den henger hvis én tjeneste er treg.
+  try {
+    show('status','Slår opp OSM-flater …');
+    osmItems = await lookupOverpass(lat,lon);
+  } catch(e) {
+    show('osm', `<h2>OSM-flater</h2>Overpass svarte ikke i tide eller ga feil:<br><code>${esc(e.message)}</code>`, 'warn');
+  }
+  if (osmItems.length) renderOSM(osmItems);
+
+  try {
+    show('status','Slår opp Kartverket/SSR …');
+    ssrItems = await lookupSSR(lat,lon);
+  } catch(e) {
+    show('ssr', `<h2>Kartverket/SSR</h2>API-et svarte ikke i tide eller ga feil:<br><code>${esc(e.message)}</code>`, 'warn');
+  }
+  if (ssrItems.length) renderSSR(ssrItems);
+
+  try {
+    show('status','Slår opp Nominatim …');
+    nomItem = await lookupNominatim(lat,lon);
+  } catch(e) {
+    show('nominatim', `<h2>Nominatim</h2>Nominatim svarte ikke i tide eller ga feil:<br><code>${esc(e.message)}</code>`, 'warn');
+  }
+  if (nomItem) renderNominatim(nomItem);
+
+  if (!osmItems.length) renderOSM(osmItems);
+  if (!ssrItems.length) renderSSR(ssrItems);
+  if (!nomItem) renderNominatim(nomItem);
+
+  const best = chooseBest(osmItems, ssrItems, nomItem);
+  if (best) show('best', `<h2>Beste forslag</h2><div class="big">${esc(best.name)}</div><div class="muted">${esc(best.source)} · ${esc(best.kind || '')}</div>`, 'ok');
+  else show('best', '<h2>Beste forslag</h2>Fant ikke noe godt navn. Prøv igjen ute med bedre GPS.', 'warn');
+  show('status','Oppslag ferdig.');
+}
+
+function chooseBest(osm, ssr, nom){
+  if (osm.length) return { name: osm[0].name, source:'OpenStreetMap-flate', kind: osm[0].kind };
+  if (ssr.length) return { name: ssr[0].name, source:'Kartverket/SSR', kind: ssr[0].kind };
+  if (nom?.name) return { name: nom.name, source:'Nominatim', kind: nom.kind };
+  return null;
+}
+
+function osmPriority(tags){
+  const p = tags.place || '';
+  const table = {neighbourhood:1, quarter:2, suburb:3, hamlet:4, village:5, town:6, city:7, island:8, locality:9};
+  if (table[p]) return table[p];
+  if (tags.leisure === 'park') return 10;
+  if (tags.landuse) return 20;
+  if (tags.natural) return 30;
+  if (tags.boundary === 'administrative') return 90 + Number(tags.admin_level || 0);
+  return 50;
+}
+
+async function fetchWithTimeout(url, seconds=8){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), seconds * 1000);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function lookupOverpass(lat, lon){
+  const q = `[out:json][timeout:15];is_in(${lat},${lon})->.a;area.a["name"];out tags;`;
+  const url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q);
+  const r = await fetchWithTimeout(url, 8);
+  if (!r.ok) throw new Error('Overpass-feil ' + r.status);
+  const data = await r.json();
+  return (data.elements || [])
+    .map(e => ({ name: e.tags?.name, kind: e.tags?.place || e.tags?.leisure || e.tags?.landuse || e.tags?.natural || (e.tags?.boundary ? 'admin '+e.tags.admin_level : 'område'), tags: e.tags || {}, priority: osmPriority(e.tags || {}) }))
+    .filter(x => x.name && !['Norge','Norway'].includes(x.name))
+    .sort((a,b) => a.priority - b.priority || a.name.localeCompare(b.name, 'no'))
+    .slice(0,10);
+}
+
+// Enkel WGS84 -> UTM sone 33N, EUREF89/WGS84. God nok for SSR-radiusoppslag i Norge.
+function latLonToUtm33(lat, lon){
+  const a=6378137, f=1/298.257223563, k0=0.9996, lon0=15*Math.PI/180;
+  const e2=f*(2-f), ep2=e2/(1-e2);
+  const phi=lat*Math.PI/180, lam=lon*Math.PI/180;
+  const N=a/Math.sqrt(1-e2*Math.sin(phi)**2);
+  const T=Math.tan(phi)**2, C=ep2*Math.cos(phi)**2, A=Math.cos(phi)*(lam-lon0);
+  const M=a*((1-e2/4-3*e2*e2/64-5*e2**3/256)*phi-(3*e2/8+3*e2*e2/32+45*e2**3/1024)*Math.sin(2*phi)+(15*e2*e2/256+45*e2**3/1024)*Math.sin(4*phi)-(35*e2**3/3072)*Math.sin(6*phi));
+  const E=500000+k0*N*(A+(1-T+C)*A**3/6+(5-18*T+T*T+72*C-58*ep2)*A**5/120);
+  const North=k0*(M+N*Math.tan(phi)*(A*A/2+(5-T+9*C+4*C*C)*A**4/24+(61-58*T+T*T+600*C-330*ep2)*A**6/720));
+  return {easting:E, northing:North};
+}
+
+async function lookupSSR(lat, lon){
+  const u = latLonToUtm33(lat, lon);
+  const params = new URLSearchParams({ nord: Math.round(u.northing), ost: Math.round(u.easting), radius: '500', koordsys: '25833', treffPerSide: '10', side: '1' });
+  const url = 'https://ws.geonorge.no/stedsnavn/v1/punkt?' + params.toString();
+  const r = await fetchWithTimeout(url, 8);
+  if (!r.ok) throw new Error('SSR-feil ' + r.status);
+  const data = await r.json();
+  const names = data.navn || data.stedsnavn || [];
+  return names.map(x => {
+    const n = x.stedsnavn?.[0]?.skrivemåte || x.stedsnavn?.[0]?.skrivemate || x.navn || x.skrivemåte || x.skrivemate;
+    const kind = x.navneobjekttype || x.objekttype || x.type || '';
+    return { name:n, kind };
+  }).filter(x => x.name).slice(0,10);
+}
+
+async function lookupNominatim(lat, lon){
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=jsonv2&addressdetails=1&namedetails=1&zoom=15&accept-language=nb`;
+  const r = await fetchWithTimeout(url, 8);
+  if (!r.ok) throw new Error('Nominatim-feil ' + r.status);
+  const data = await r.json();
+  const a = data.address || {};
+  const name = data.name || a.neighbourhood || a.suburb || a.quarter || a.village || a.hamlet || a.town || a.city || data.display_name;
+  return { name, kind: data.type || data.category || '', display: data.display_name, address:a };
+}
+
+function renderOSM(items){
+  if (!items.length) { show('osm','<h2>OSM-flater</h2>Ingen navngitte flater funnet, eller Overpass svarte ikke.','warn'); return; }
+  show('osm','<h2>OSM-flater</h2>' + items.map(x => `<div class="row"><div class="label">${esc(x.kind)}</div><div>${esc(x.name)}</div></div>`).join(''));
+}
+function renderSSR(items){
+  if (!items.length) { show('ssr','<h2>Kartverket/SSR</h2>Ingen SSR-navn funnet innen 500 m, eller API-et svarte ikke.','warn'); return; }
+  show('ssr','<h2>Kartverket/SSR nær punktet</h2>' + items.map(x => `<div class="row"><div class="label">${esc(x.kind)}</div><div>${esc(x.name)}</div></div>`).join(''));
+}
+function renderNominatim(x){
+  if (!x?.name) { show('nominatim','<h2>Nominatim</h2>Ingen svar.','warn'); return; }
+  show('nominatim', `<h2>Nominatim</h2><div class="row"><div class="label">Navn</div><div>${esc(x.name)}</div></div><div class="row"><div class="label">Detalj</div><div>${esc(x.display || '')}</div></div>`);
+}
+</script>
 </body>
 </html>
